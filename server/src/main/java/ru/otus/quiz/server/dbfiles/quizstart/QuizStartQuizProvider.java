@@ -26,12 +26,15 @@ public class QuizStartQuizProvider implements QuizProvider, AutoCloseable {
             ResultSet rs = stmt.executeQuery();
             StringBuilder quizList = new StringBuilder("Доступные викторины:\n");
 
+            int count = 1;
             while (rs.next()) {
                 String quizName = rs.getString("quiz_name");
                 double quizRating = rs.getDouble("rating");
                 String ownerName = rs.getString("owner_name");
-                quizList.append(quizName).append(". Рейтинг ").append(String.format("%.2f", quizRating)).
-                        append(". Владелец: ").append(ownerName).append("\n");
+                quizList.append(count).append(". ").append(quizName).append(". Рейтинг ")
+                        .append(String.format("%.2f", quizRating)).append(". Владелец: ")
+                        .append(ownerName).append("\n");
+                count++;
             }
 
             client.sendMessage(quizList.toString());
@@ -94,6 +97,10 @@ public class QuizStartQuizProvider implements QuizProvider, AutoCloseable {
                     client.sendMessage("Викторина завершена!");
                     quizRate(client, quizName);
                     recordQuizResult(client, quizId, quizName);
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                } catch (TimeoutException e) {
+                    throw new RuntimeException(e);
                 }
             } else {
                 client.sendMessage("Викторина с таким именем не найдена.");
@@ -113,28 +120,29 @@ public class QuizStartQuizProvider implements QuizProvider, AutoCloseable {
         }
     }
 
-    private void checkAnswer(int questionId, String clientAnswer, ClientPart client) throws SQLException {
+    private void checkAnswer(int questionId, String clientAnswer, ClientPart client) throws SQLException, IOException, TimeoutException {
         try (PreparedStatement correctPs = connection.prepareStatement(QueriesToBd.GET_CORRECT_ANSWER)) {
             correctPs.setInt(1, questionId);
             ResultSet rs = correctPs.executeQuery();
 
-            while (rs.next()) {
+            if (rs.next()) {
                 int correct = rs.getInt("correct_answer");
                 int attempts = 3;
 
-                while (true) {
+                while (attempts > 0) {
                     try {
                         int clientAns = Integer.parseInt(clientAnswer);
 
                         if (clientAns < 1 || clientAns > 4) {
-                            if (attempts == 0) {
+                            attempts --;
+                            if (attempts > 0) {
+                                client.sendMessage("Осталось попыток для корректного ввода: " + attempts +
+                                        "\nОтвет должен быть числом от 1 до 4.");
+                                clientAnswer = getAnswer(client);
+                            } else {
                                 client.sendMessage("Перехожу на следующий вопрос.");
                                 break;
                             }
-                            client.sendMessage("Осталось попыток для корректного ввода: " + attempts +
-                                    "\nОтвет должен быть числом от 1 до 4.");
-                            getAnswer(client);
-                            attempts --;
 
                         } else if (correct == clientAns) {
                             correctAnswerCount++;
@@ -145,11 +153,20 @@ public class QuizStartQuizProvider implements QuizProvider, AutoCloseable {
                             break;
                         }
                     } catch (NumberFormatException e) {
-                        client.sendMessage("Введите число от 1 до 4.");
-                    } catch (IOException e) {
-                        throw new RuntimeException(e);
+                        attempts --;
+                        if (attempts > 0) {
+                            client.sendMessage("Осталось попыток для корректного ввода: " + attempts +
+                                    "\nОтвет должен быть числом от 1 до 4.");
+                            clientAnswer = getAnswer(client);
+                        } else {
+                            client.sendMessage("Перехожу к следующему вопросу.");
+                            break;
+                        }
                     } catch (TimeoutException e) {
                         client.sendMessage("Время на ответ истекло.");
+                        break;
+                    } catch (IOException e) {
+                        throw new RuntimeException(e);
                     }
                 }
             }
@@ -229,7 +246,7 @@ public class QuizStartQuizProvider implements QuizProvider, AutoCloseable {
         }
     }
 
-    public void recordQuizResult(ClientPart client, int quizId, String quizName) throws SQLException {
+    private void recordQuizResult(ClientPart client, int quizId, String quizName) throws SQLException {
         int userId = getUserId(client);
 
         try (PreparedStatement stmt = connection.prepareStatement(QueriesToBd.INSERT_RESULT)) {
@@ -240,11 +257,11 @@ public class QuizStartQuizProvider implements QuizProvider, AutoCloseable {
         }
         System.out.println("Результат сохранен в бд.");
 
-        client.sendMessage("РЕЗУЛЬТАТ -\n"
+        client.sendMessage("РЕЗУЛЬТАТ :\n"
                 + "Викторина: " + quizName + ". Правильных ответов: " + correctAnswerCount + " из 20.");
     }
 
-    public boolean hasUserTakenQuiz(int userId, int quizId) throws SQLException {
+    private boolean hasUserTakenQuiz(int userId, int quizId) throws SQLException {
         try (PreparedStatement ps = connection.prepareStatement(QueriesToBd.SELECT_RESULT_BY_U_ID_AND_Q_ID)) {
             ps.setInt(1, userId);
             ps.setInt(2, quizId);

@@ -12,6 +12,7 @@ public class ClientPart {
     private Socket socket;
     private DataInputStream in;
     private DataOutputStream out;
+    private volatile boolean running;
     private String username;
     private int userId = 1;
 
@@ -36,74 +37,20 @@ public class ClientPart {
         this.socket = socket;
         this.in = new DataInputStream(socket.getInputStream());
         this.out = new DataOutputStream(socket.getOutputStream());
+        running = true;
 
         new Thread(() -> {
             try {
                 System.out.println("Подключился новый клиент");
                 sendMessage("Список команд /help");
 
-                while (true) {
+                handleAuthentication();
+
+                while (running) {
                     String message = in.readUTF();
-
-                    if (message.equals("/exit")) {
-                        sendMessage("/disconnect");
-                        break;
-                    } else if (message.equals("/help")) {
-                        commandHelp();
-                    } else if (message.startsWith("/auth ")) {
-                        String[] str = message.split(" ");
-                        if (str.length != 3) {
-                            sendMessage("Неверный формат команды /auth");
-                            continue;
-                        }
-                        if (this.server.getAuthenticationProvider().authenticate(this, str[1], str[2])) {
-                            userId = this.server.getAuthenticationProvider().getUserIdByUsername(username);
-                            server.getClients().put(username, this);
-                            break;
-                        }
-                        continue;
-                    } else if (message.startsWith("/reg")) {
-                        String login = inputData("Введите логин:");
-                        String name = inputData("Введите имя:");
-                        String password = inputData("Введите пароль:");
-
-                        if (this.server.getAuthenticationProvider().isUserExists(login, name, password)) {
-                            sendMessage("Такой пользователь уже зарегестрирован или имя занято.");
-                            continue;
-                        } else {
-                            this.server.getAuthenticationProvider().createUser(login, name, password);
-                            sendMessage("Вы успешно прошли регистрацию.");
-                            userId = this.server.getAuthenticationProvider().getUserIdByUsername(name);
-                            this.server.getAuthenticationProvider().authenticate(this, login, password);
-                            server.getClients().put(name, this);
-                            break;
-                        }
-                    }
-
-                    sendMessage("Сначала нужно пройти аутентификацию '/auth login password' или регистрацию " +
-                            "'/reg'");
+                    handleCommand(message);
                 }
 
-                while (true) {
-                    String message = in.readUTF();
-
-                    if (message.startsWith("/")) {
-                        if (message.equals("/exit")) {
-                            sendMessage("/disconnect");
-                            break;
-                        } else if (message.equals("/createquiz")) {
-                            commandCreateQuiz();
-                        } else if (message.equals("/insertquiz")) {
-                            sendMessage("Введите имя файла:");
-                            String fileName = in.readUTF();
-                            insertQuizFromFileToDb(fileName);
-                        } else if (message.equals("/quizzes")) {
-                            commandGetQuizzes();
-                        } else if (message.startsWith("/quiz ")) {
-                            commandStartQuiz(message);
-                        }
-                    }
-                }
             } catch (IOException e) {
                 e.printStackTrace();
             } catch (SQLException e) {
@@ -112,6 +59,91 @@ public class ClientPart {
                 disconnect();
             }
         }).start();
+    }
+
+    private void handleAuthentication() throws IOException, SQLException {
+        while (running) {
+            String message = in.readUTF();
+
+            if (message.equals("/exit")) {
+                sendMessage("Выполнен выход из программы.");
+                System.out.println("Пользователь " + username + " отключился.");
+                running = false;
+                break;
+            }
+
+            if (message.equals("/help")) {
+                commandHelp();
+            }
+
+            if (message.startsWith("/auth ")) {
+                if (authenticateUser(message)) {
+                    break;
+                }
+            } else if (message.startsWith("/reg")) {
+                if (registerUser()) {
+                    break;
+                }
+            } else {
+                sendMessage("Сначала нужно пройти аутентификацию '/auth login password' или регистрацию '/reg'.");
+            }
+        }
+    }
+
+    private boolean authenticateUser(String message) throws SQLException {
+        String[] str = message.split(" ");
+
+        if (str.length != 3) {
+            sendMessage("Неверный формат команды /auth");
+            return false;
+        }
+        if (this.server.getAuthenticationProvider().authenticate(this, str[1], str[2])) {
+            userId = this.server.getAuthenticationProvider().getUserIdByUsername(username);
+            server.getClients().put(username, this);
+            return true;
+        }
+
+        return false;
+    }
+
+    private boolean registerUser() throws IOException, SQLException {
+        String login = inputData("Введите логин:");
+        String name = inputData("Введите имя:");
+        String password = inputData("Введите пароль:");
+
+        if (this.server.getAuthenticationProvider().isUserExists(login, name, password)) {
+            sendMessage("Такой пользователь уже зарегестрирован или имя занято.");
+            return false;
+        } else {
+            this.server.getAuthenticationProvider().createUser(login, name, password);
+            sendMessage("Вы успешно прошли регистрацию.");
+            userId = this.server.getAuthenticationProvider().getUserIdByUsername(name);
+            this.server.getAuthenticationProvider().authenticate(this, login, password);
+            server.getClients().put(name, this);
+            return true;
+        }
+    }
+
+    private void handleCommand(String message) throws IOException, SQLException {
+        if (message.equals("/exit")) {
+            sendMessage("Выполнен выход из программы.");
+            System.out.println("Пользователь " + username + " отключился.");
+            running = false;
+        } else if (message.equals("/createquiz")) {
+            commandCreateQuiz();
+        } else if (message.equals("/insertquiz")) {
+            sendMessage("Введите имя файла:");
+            String fileName = in.readUTF();
+            insertQuizFromFileToDb(fileName);
+        } else if (message.equals("/quizzes")) {
+            commandGetQuizzes();
+        } else if (message.startsWith("/join ")) {
+            commandStartQuiz(message);
+        } else if (message.equals("/help")) {
+            commandHelp();
+        } else {
+            sendMessage("Нет такой команды. Воспользуйтесь командой /help для вызова списка команд.");
+        }
     }
     
     private void commandGetQuizzes() throws SQLException {
@@ -139,10 +171,10 @@ public class ClientPart {
                 /reg – регистрация
                 /auth – аутентификация
                 /join quiz_name – подключиться к викторине
-                /quizes – запросить список викторин
+                /quizzes – запросить список викторин
                 /insertquiz - добавление викторины из ранее созданного файла
                 /createquiz - создание викторины (в том числе и файл с ней)
-                /exit – выход (для клиента)
+                /exit – выход
                 """);
     }
 
@@ -192,25 +224,18 @@ public class ClientPart {
     }
 
     public void disconnect() {
+        running = false;
         server.getClients().remove(username);
 
         try {
             if (in != null) {
                 in.close();
             }
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
 
-        try {
             if (out != null) {
                 out.close();
             }
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
 
-        try {
             if (socket != null) {
                 socket.close();
             }

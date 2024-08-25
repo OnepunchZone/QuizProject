@@ -10,16 +10,18 @@ public class Client {
     private Socket socket;
     private DataInputStream in;
     private DataOutputStream out;
+    private volatile boolean running;
 
     public Client() throws IOException {
         Scanner sc = new Scanner(System.in);
         socket = new Socket("localhost", 3232);
         in = new DataInputStream(socket.getInputStream());
         out = new DataOutputStream(socket.getOutputStream());
+        running = true;
 
         new Thread(() -> {
             try {
-                while (true) {
+                while (running) {
                     String message = in.readUTF();
 
                     if (message.startsWith("/correctauth ")) {
@@ -29,7 +31,9 @@ public class Client {
                     System.out.println(message);
                 }
             } catch (IOException e) {
-                e.printStackTrace();
+                if (running) {
+                    e.printStackTrace();
+                }
             } finally {
                 disconnect();
             }
@@ -39,12 +43,15 @@ public class Client {
             String message = sc.nextLine();
             out.writeUTF(message);
             if (message.equals("/exit")) {
+                running = false;
                 break;
             }
         }
     }
 
     public void disconnect() {
+        running = false;
+
         try {
             if (in != null) {
                 in.close();

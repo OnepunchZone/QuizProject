@@ -46,7 +46,7 @@ public class QuizFileCreate implements AutoCloseable {
             }
 
             int n = 1;
-            while (n < 20) {
+            while (n < 21) {
                 out.writeUTF("Введите вопрос №" + n);
                 writer.write(in.readUTF() + "\n");
                 for (int i = 1; i < 5; i++) {

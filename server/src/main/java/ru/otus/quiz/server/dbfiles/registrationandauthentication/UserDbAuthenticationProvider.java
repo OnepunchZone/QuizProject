@@ -19,7 +19,7 @@ public class UserDbAuthenticationProvider implements AuthenticationProvider, Aut
     }
 
     @Override
-    public boolean authenticate(ClientPart clientPart, String login, String password) throws SQLException {
+    public boolean authenticate(ClientPart clientPart, String login, String password) {
         String authName = getUsernameByLogAndPass(login, password);
 
         if (authName == null) {
